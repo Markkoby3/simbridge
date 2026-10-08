@@ -1,0 +1,95 @@
+cmake_minimum_required(VERSION 3.16)
+project(SimBridge VERSION 0.1.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
+option(SIMBRIDGE_BUILD_TESTS "Build the GoogleTest suite" ON)
+option(SIMBRIDGE_SANITIZE "Build with AddressSanitizer and UBSan" OFF)
+
+find_package(Threads REQUIRED)
+
+set(SIMBRIDGE_WARNINGS -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wno-sign-conversion)
+if(SIMBRIDGE_SANITIZE)
+  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=address,undefined)
+endif()
+
+set(SIMBRIDGE_PLUGIN_DIR ${CMAKE_BINARY_DIR}/plugins)
+
+# Core library: bus, scenario parser, plugin loader, backend adapters, engine, UDP bridge.
+add_library(simbridge_core STATIC
+  src/scenario.cpp
+  src/plugin_registry.cpp
+  src/kinematic_backend.cpp
+  src/legacy_block_sim.cpp
+  src/legacy_blocks_adapter.cpp
+  src/engine.cpp
+  src/wire.cpp
+  src/udp_bridge.cpp)
+target_include_directories(simbridge_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(simbridge_core PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
+target_compile_options(simbridge_core PRIVATE ${SIMBRIDGE_WARNINGS})
+set_target_properties(simbridge_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# Plugins are loadable modules that depend only on the public headers.
+function(simbridge_add_plugin name)
+  add_library(${name} MODULE ${ARGN})
+  target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_compile_options(${name} PRIVATE ${SIMBRIDGE_WARNINGS})
+  set_target_properties(${name} PROPERTIES
+    PREFIX ""
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+    LIBRARY_OUTPUT_DIRECTORY ${SIMBRIDGE_PLUGIN_DIR})
+endfunction()
+
+simbridge_add_plugin(waypoint_follower plugins/waypoint_follower/waypoint_follower.cpp)
+simbridge_add_plugin(radar_sensor plugins/radar_sensor/radar_sensor.cpp)
+
+foreach(app simbridge_run simbridge_bench)
+  add_executable(${app} apps/${app}.cpp)
+  target_link_libraries(${app} PRIVATE simbridge_core)
+  target_compile_options(${app} PRIVATE ${SIMBRIDGE_WARNINGS})
+  target_compile_definitions(${app} PRIVATE SIMBRIDGE_DEFAULT_PLUGIN_DIR="${SIMBRIDGE_PLUGIN_DIR}")
+  add_dependencies(${app} waypoint_follower radar_sensor)
+endforeach()
+
+if(SIMBRIDGE_BUILD_TESTS)
+  enable_testing()
+  include(FetchContent)
+  FetchContent_Declare(googletest
+    URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+  set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(googletest)
+
+  add_library(bad_abi_plugin MODULE tests/plugins/bad_abi_plugin.cpp)
+  target_include_directories(bad_abi_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  set_target_properties(bad_abi_plugin PROPERTIES
+    PREFIX "" CXX_VISIBILITY_PRESET hidden
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/test_plugins)
+
+  add_executable(simbridge_tests
+    tests/test_message_bus.cpp
+    tests/test_scenario.cpp
+    tests/test_plugin_registry.cpp
+    tests/test_backends.cpp
+    tests/test_wire.cpp
+    tests/test_engine.cpp
+    tests/test_udp_bridge.cpp)
+  target_link_libraries(simbridge_tests PRIVATE simbridge_core GTest::gtest_main)
+  target_compile_definitions(simbridge_tests PRIVATE
+    SIMBRIDGE_PLUGIN_DIR="${SIMBRIDGE_PLUGIN_DIR}"
+    SIMBRIDGE_TEST_PLUGIN_DIR="${CMAKE_BINARY_DIR}/test_plugins"
+    SIMBRIDGE_SCENARIO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/scenarios")
+  add_dependencies(simbridge_tests waypoint_follower radar_sensor bad_abi_plugin)
+
+  include(GoogleTest)
+  gtest_discover_tests(simbridge_tests)
+endif()

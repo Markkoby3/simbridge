@@ -1,0 +1,5 @@
+build*/
+*.csv
+__pycache__/
+.vscode/
+.idea/

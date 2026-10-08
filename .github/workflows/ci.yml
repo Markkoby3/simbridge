@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+        config:
+          - { name: release, flags: "-DCMAKE_BUILD_TYPE=Release" }
+          - { name: sanitizers, flags: "-DCMAKE_BUILD_TYPE=Debug -DSIMBRIDGE_SANITIZE=ON" }
+    name: ${{ matrix.compiler }} / ${{ matrix.config.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} ${{ matrix.config.flags }}
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Smoke run (both backends)
+        run: |
+          ./build/simbridge_run scenarios/coastal_patrol.scn
+          ./build/simbridge_run scenarios/coastal_patrol.scn --backend legacy_blocks

@@ -1,0 +1,44 @@
+# A UAV flies a square patrol with a forward radar while a surface vessel
+# transits south through the area. A moored buoy is a passive contact.
+# Coordinates are ENU meters (x = east, y = north, z = up).
+# heading_deg is measured counterclockwise from east.
+
+[scenario]
+name = coastal_patrol
+duration_s = 180
+timestep_s = 0.05
+backend = kinematic
+seed = 42
+
+[entity uav1]
+id = 1
+model = waypoint_follower
+position = 0, 0, 120
+heading_deg = 0
+speed_mps = 25
+waypoints = 1500,0,120; 1500,1500,120; 0,1500,120; 0,0,120
+arrival_radius_m = 40
+loop = true
+
+[entity vessel1]
+id = 2
+model = waypoint_follower
+position = 900, 1400, 0
+heading_deg = -90
+speed_mps = 6
+waypoints = 900,-600,0
+
+[entity buoy1]
+id = 3
+model = none
+position = 1200, 300, 0
+
+[sensor radar1]
+id = 100
+host = 1
+model = radar_sensor
+range_m = 1200
+fov_deg = 120
+update_hz = 5
+range_noise_m = 2.0
+bearing_noise_deg = 0.5
