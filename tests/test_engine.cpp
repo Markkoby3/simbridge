@@ -172,6 +172,31 @@ TEST(Engine, LateJoinerReceivesLatestStateOfEveryEntity) {
     EXPECT_EQ(latest.size(), 3u);
 }
 
+TEST(Engine, ExternalEntityFollowsCommandsPublishedOnTheBus) {
+    Harness h(parse_scenario_string(R"(
+[scenario]
+duration_s = 10
+timestep_s = 0.1
+[entity drone]
+id = 4
+model = external
+position = 0, 0, 50
+speed_mps = 0
+)"));
+    // Stand in for an outside controller: command due north at 10 m/s every frame.
+    for (int i = 0; i < 100; ++i) {
+        VehicleCommand c;
+        c.entity_id = 4;
+        c.heading_rad = kPi / 2;
+        c.speed_mps = 10.0;
+        h.bus.publish(topics::kVehicleCommand, c);
+        h.engine->step();
+    }
+    const EntityState s = h.state(4);
+    EXPECT_GT(s.pos.y, 50.0);  // turned north and accelerated (limits apply)
+    EXPECT_NEAR(s.speed_mps, 10.0, 1e-9);
+}
+
 TEST(Engine, UnknownModelTypeFailsFast) {
     Scenario sc = parse_scenario_string(
         "[scenario]\nduration_s = 1\ntimestep_s = 0.1\n[entity a]\nid = 1\nmodel = warp_drive\nposition = 0,0,0\n");

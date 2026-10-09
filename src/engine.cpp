@@ -23,7 +23,10 @@ SimEngine::SimEngine(Scenario scenario, std::unique_ptr<ISimBackend> backend, co
         const double heading = e.get_double_or("heading_deg", 0.0) * kPi / 180.0;
         backend_->add_entity(id, e.name, e.get_vec3("position"), heading, e.get_double_or("speed_mps", 0.0));
         const std::string type = e.get("model");
-        if (type == "none") continue;  // passive entity, moved only by its initial state
+        // "none": passive, moves only on its initial state.
+        // "external": no plugin; steered by vehicle_command samples from outside
+        // the process (for example an autonomy stack connected over DDS).
+        if (type == "none" || type == "external") continue;
         Instance inst{plugins.create(type), id};
         inst.model->configure(ModelInit{e, id, id, scenario_.seed});
         models_.push_back(std::move(inst));
