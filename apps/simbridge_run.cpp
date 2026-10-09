@@ -1,7 +1,10 @@
 // simbridge_run: run a scenario from the command line.
 //
 //   simbridge_run <scenario.scn> [--plugins DIR] [--backend kinematic|legacy_blocks]
-//                 [--udp HOST:PORT] [--csv FILE] [--realtime]
+//                 [--udp HOST:PORT] [--dds DOMAIN] [--csv FILE] [--realtime]
+//
+// --dds publishes entity state and detections on a DDS domain and applies
+// vehicle commands received from it (requires a build with Cyclone DDS).
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
@@ -17,6 +20,9 @@
 #include "simbridge/plugin_registry.hpp"
 #include "simbridge/scenario.hpp"
 #include "simbridge/udp_bridge.hpp"
+#ifdef SIMBRIDGE_HAS_DDS
+#include "simbridge/dds_bridge.hpp"
+#endif
 
 #ifndef SIMBRIDGE_DEFAULT_PLUGIN_DIR
 #define SIMBRIDGE_DEFAULT_PLUGIN_DIR "plugins"
@@ -26,7 +32,7 @@ namespace {
 
 int usage() {
     std::cerr << "usage: simbridge_run <scenario.scn> [--plugins DIR] [--backend kinematic|legacy_blocks]\n"
-                 "                     [--udp HOST:PORT] [--csv FILE] [--realtime]\n";
+                 "                     [--udp HOST:PORT] [--dds DOMAIN] [--csv FILE] [--realtime]\n";
     return 2;
 }
 
@@ -39,6 +45,7 @@ int main(int argc, char** argv) {
     std::string scenario_path = argv[1];
     std::string plugin_dir = SIMBRIDGE_DEFAULT_PLUGIN_DIR;
     std::string backend_override, udp_target, csv_path;
+    int dds_domain = -1;
     bool realtime = false;
 
     for (int i = 2; i < argc; ++i) {
@@ -52,6 +59,7 @@ int main(int argc, char** argv) {
             else if (arg == "--backend") backend_override = value();
             else if (arg == "--udp") udp_target = value();
             else if (arg == "--csv") csv_path = value();
+            else if (arg == "--dds") dds_domain = std::stoi(value());
             else if (arg == "--realtime") realtime = true;
             else return usage();
         } catch (const std::exception& e) {
@@ -78,6 +86,19 @@ int main(int argc, char** argv) {
                                               static_cast<uint16_t>(std::stoi(udp_target.substr(colon + 1))));
         }
 
+#ifdef SIMBRIDGE_HAS_DDS
+        std::unique_ptr<DdsBridge> dds;
+        if (dds_domain >= 0) {
+            DdsBridgeOptions opts;
+            opts.domain_id = static_cast<uint32_t>(dds_domain);
+            dds = std::make_unique<DdsBridge>(bus, opts);
+            std::cout << "dds domain " << dds_domain << ": publishing " << dds_topics::kEntityState << ", "
+                      << dds_topics::kDetection << "; reading " << dds_topics::kVehicleCommand << "\n";
+        }
+#else
+        if (dds_domain >= 0) throw std::runtime_error("this build has no DDS support (install Cyclone DDS and rebuild)");
+#endif
+
         std::ofstream csv;
         if (!csv_path.empty()) {
             csv.open(csv_path);
@@ -95,6 +116,9 @@ int main(int argc, char** argv) {
 
         const auto start = std::chrono::steady_clock::now();
         const RunStats stats = engine.run([&](const RunStats& s) {
+#ifdef SIMBRIDGE_HAS_DDS
+            if (dds) dds->poll_commands();  // applied on the next frame, on this thread
+#endif
             if (realtime) {
                 std::this_thread::sleep_until(start + std::chrono::duration<double>(s.sim_time_s));
             }
@@ -110,6 +134,13 @@ int main(int argc, char** argv) {
             std::cout << "udp packets " << udp->packets_sent() << "  bytes " << udp->bytes_sent() << "  errors "
                       << udp->send_errors() << "\n";
         }
+#ifdef SIMBRIDGE_HAS_DDS
+        if (dds) {
+            const auto ds = dds->stats();
+            std::cout << "dds states " << ds.states_written << "  detections " << ds.detections_written
+                      << "  commands received " << ds.commands_received << "  errors " << ds.write_errors << "\n";
+        }
+#endif
         for (const auto& s : engine.backend().states()) {
             std::cout << std::setprecision(1) << "  " << s.name << "  pos (" << s.pos.x << ", " << s.pos.y << ", "
                       << s.pos.z << ")  speed " << s.speed_mps << " m/s\n";

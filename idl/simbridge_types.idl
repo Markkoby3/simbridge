@@ -1,0 +1,45 @@
+// DDS data types for SimBridge. idlc generates the C type support from this file.
+//
+// Units and frames match include/simbridge/messages.hpp:
+// SI units, ENU frame (x = east, y = north, z = up), headings in radians
+// counterclockwise from east.
+//
+// @key fields make each entity its own DDS instance, so KEEP_LAST(1) with
+// TRANSIENT_LOCAL durability gives a late joining reader the latest state of
+// every entity rather than only the last sample written.
+
+module simbridge_dds {
+
+  struct Vec3 {
+    double x;
+    double y;
+    double z;
+  };
+
+  struct EntityState {
+    @key unsigned long id;
+    string name;
+    double t;
+    Vec3 pos;
+    Vec3 vel;
+    double heading_rad;
+    double speed_mps;
+  };
+
+  struct VehicleCommand {
+    @key unsigned long entity_id;
+    double t;
+    double heading_rad;
+    double speed_mps;
+  };
+
+  struct Detection {
+    unsigned long sensor_id;
+    unsigned long host_id;
+    unsigned long target_id;
+    double t;
+    double range_m;
+    double bearing_rad;
+  };
+
+};

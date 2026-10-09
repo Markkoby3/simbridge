@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(SimBridge VERSION 0.1.0 LANGUAGES CXX)
+project(SimBridge VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,6 +10,8 @@ endif()
 
 option(SIMBRIDGE_BUILD_TESTS "Build the GoogleTest suite" ON)
 option(SIMBRIDGE_SANITIZE "Build with AddressSanitizer and UBSan" OFF)
+set(SIMBRIDGE_WITH_DDS AUTO CACHE STRING "Build the Cyclone DDS transport: AUTO, ON or OFF")
+set_property(CACHE SIMBRIDGE_WITH_DDS PROPERTY STRINGS AUTO ON OFF)
 
 find_package(Threads REQUIRED)
 
@@ -48,6 +50,25 @@ function(simbridge_add_plugin name)
     LIBRARY_OUTPUT_DIRECTORY ${SIMBRIDGE_PLUGIN_DIR})
 endfunction()
 
+# Optional DDS transport (Eclipse Cyclone DDS). AUTO builds it when Cyclone DDS is installed.
+set(SIMBRIDGE_HAS_DDS OFF)
+if(NOT SIMBRIDGE_WITH_DDS STREQUAL "OFF")
+  if(SIMBRIDGE_WITH_DDS STREQUAL "ON")
+    find_package(CycloneDDS REQUIRED)
+  else()
+    find_package(CycloneDDS QUIET)
+  endif()
+  if(CycloneDDS_FOUND)
+    set(SIMBRIDGE_HAS_DDS ON)
+    idlc_generate(TARGET simbridge_dds_types FILES idl/simbridge_types.idl DEFAULT_EXTENSIBILITY final)
+    add_library(simbridge_dds STATIC src/dds_bridge.cpp)
+    target_link_libraries(simbridge_dds PUBLIC simbridge_core PRIVATE simbridge_dds_types CycloneDDS::ddsc)
+    target_compile_options(simbridge_dds PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SIMBRIDGE_WARNINGS}>)
+    set_target_properties(simbridge_dds PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  endif()
+endif()
+message(STATUS "SimBridge DDS transport: ${SIMBRIDGE_HAS_DDS}")
+
 simbridge_add_plugin(waypoint_follower plugins/waypoint_follower/waypoint_follower.cpp)
 simbridge_add_plugin(radar_sensor plugins/radar_sensor/radar_sensor.cpp)
 
@@ -58,6 +79,10 @@ foreach(app simbridge_run simbridge_bench)
   target_compile_definitions(${app} PRIVATE SIMBRIDGE_DEFAULT_PLUGIN_DIR="${SIMBRIDGE_PLUGIN_DIR}")
   add_dependencies(${app} waypoint_follower radar_sensor)
 endforeach()
+if(SIMBRIDGE_HAS_DDS)
+  target_link_libraries(simbridge_run PRIVATE simbridge_dds)
+  target_compile_definitions(simbridge_run PRIVATE SIMBRIDGE_HAS_DDS=1)
+endif()
 
 if(SIMBRIDGE_BUILD_TESTS)
   enable_testing()
