@@ -1,0 +1,42 @@
+# Intercept demo for the DDS transport.
+#
+# uav1 flies a looping patrol under its plugin. interceptor1 has no plugin
+# (model = external): it only moves when an outside process sends commands
+# over DDS. Run the simulation in real time and start the autonomy client:
+#
+#   ./build/simbridge_run scenarios/dds_intercept.scn --dds 0 --realtime &
+#   ./build/simbridge_autonomy --domain 0 --interceptor 10 --target 1
+#
+# Coordinates are ENU meters; heading_deg is counterclockwise from east.
+
+[scenario]
+name = dds_intercept
+duration_s = 90
+timestep_s = 0.05
+backend = kinematic
+seed = 3
+
+[entity uav1]
+id = 1
+model = waypoint_follower
+position = 800, 800, 120
+heading_deg = 0
+speed_mps = 25
+waypoints = 1600,800,120; 1600,1600,120; 800,1600,120; 800,800,120
+arrival_radius_m = 40
+loop = true
+
+[entity interceptor1]
+id = 10
+model = external
+position = 300, 300, 120
+heading_deg = 45
+speed_mps = 0
+
+[sensor radar1]
+id = 100
+host = 1
+model = radar_sensor
+range_m = 1500
+fov_deg = 120
+update_hz = 5

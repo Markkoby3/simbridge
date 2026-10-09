@@ -84,6 +84,11 @@ endforeach()
 if(SIMBRIDGE_HAS_DDS)
   target_link_libraries(simbridge_run PRIVATE simbridge_dds)
   target_compile_definitions(simbridge_run PRIVATE SIMBRIDGE_HAS_DDS=1)
+
+  # Example autonomy process: shares only the IDL types and topic names with the simulation.
+  add_executable(simbridge_autonomy apps/simbridge_autonomy.cpp)
+  target_link_libraries(simbridge_autonomy PRIVATE simbridge_dds)
+  target_compile_options(simbridge_autonomy PRIVATE ${SIMBRIDGE_WARNINGS})
 endif()
 
 if(SIMBRIDGE_BUILD_TESTS)
