@@ -17,13 +17,28 @@ jobs:
     name: ${{ matrix.compiler }} / ${{ matrix.config.name }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install Cyclone DDS
+        run: sudo apt-get update && sudo apt-get install -y cyclonedds-dev cyclonedds-tools
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} ${{ matrix.config.flags }}
+        run: cmake -S . -B build -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} -DSIMBRIDGE_WITH_DDS=ON ${{ matrix.config.flags }}
       - name: Build
         run: cmake --build build -j
       - name: Test
         run: ctest --test-dir build --output-on-failure
-      - name: Smoke run (both backends)
+      - name: Smoke run (both backends and DDS)
         run: |
           ./build/simbridge_run scenarios/coastal_patrol.scn
           ./build/simbridge_run scenarios/coastal_patrol.scn --backend legacy_blocks
+          ./build/simbridge_run scenarios/coastal_patrol.scn --dds 7
+
+  without-dds:
+    runs-on: ubuntu-latest
+    name: g++ / no DDS installed
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DSIMBRIDGE_WITH_DDS=AUTO
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

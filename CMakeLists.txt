@@ -62,7 +62,9 @@ if(NOT SIMBRIDGE_WITH_DDS STREQUAL "OFF")
     set(SIMBRIDGE_HAS_DDS ON)
     idlc_generate(TARGET simbridge_dds_types FILES idl/simbridge_types.idl DEFAULT_EXTENSIBILITY final)
     add_library(simbridge_dds STATIC src/dds_bridge.cpp)
-    target_link_libraries(simbridge_dds PUBLIC simbridge_core PRIVATE simbridge_dds_types CycloneDDS::ddsc)
+    target_link_libraries(simbridge_dds PUBLIC simbridge_core CycloneDDS::ddsc PRIVATE simbridge_dds_types)
+    # Expose the generated type header so tools and tests can speak the same DDS types.
+    target_include_directories(simbridge_dds PUBLIC $<TARGET_PROPERTY:simbridge_dds_types,INTERFACE_INCLUDE_DIRECTORIES>)
     target_compile_options(simbridge_dds PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SIMBRIDGE_WARNINGS}>)
     set_target_properties(simbridge_dds PROPERTIES POSITION_INDEPENDENT_CODE ON)
   endif()
@@ -114,6 +116,11 @@ if(SIMBRIDGE_BUILD_TESTS)
     SIMBRIDGE_TEST_PLUGIN_DIR="${CMAKE_BINARY_DIR}/test_plugins"
     SIMBRIDGE_SCENARIO_DIR="${CMAKE_CURRENT_SOURCE_DIR}/scenarios")
   add_dependencies(simbridge_tests waypoint_follower radar_sensor bad_abi_plugin)
+
+  if(SIMBRIDGE_HAS_DDS)
+    target_sources(simbridge_tests PRIVATE tests/test_dds_bridge.cpp)
+    target_link_libraries(simbridge_tests PRIVATE simbridge_dds)
+  endif()
 
   include(GoogleTest)
   gtest_discover_tests(simbridge_tests)
