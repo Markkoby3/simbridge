@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <memory>
 #include <string>
 
 #include "simbridge/backend.hpp"
@@ -12,6 +13,9 @@
 #include "simbridge/message_bus.hpp"
 #include "simbridge/plugin_registry.hpp"
 #include "simbridge/scenario.hpp"
+#ifdef SIMBRIDGE_HAS_DDS
+#include "simbridge/dds_bridge.hpp"
+#endif
 
 #ifndef SIMBRIDGE_DEFAULT_PLUGIN_DIR
 #define SIMBRIDGE_DEFAULT_PLUGIN_DIR "plugins"
@@ -60,18 +64,36 @@ std::string make_swarm_scenario(int vehicles, int radars) {
     return o.str();
 }
 
-void bench_engine(const std::string& plugin_dir, const std::string& backend) {
+void bench_engine(const std::string& plugin_dir, const std::string& backend, bool with_dds = false) {
     PluginRegistry plugins;
     MessageBus bus;
     const Scenario sc = parse_scenario_string(make_swarm_scenario(200, 20));
     declare_standard_topics(bus, sc.entities.size());
     plugins.load_directory(plugin_dir);
+#ifdef SIMBRIDGE_HAS_DDS
+    std::unique_ptr<DdsBridge> dds;
+    if (with_dds) {
+        DdsBridgeOptions opts;
+        opts.domain_id = 77;
+        dds = std::make_unique<DdsBridge>(bus, opts);
+    }
+#else
+    (void)with_dds;
+#endif
     SimEngine engine(sc, make_backend(backend), plugins, bus);
     const RunStats st = engine.run();
-    std::cout << std::fixed << std::setprecision(1) << "engine (" << backend << "): " << sc.entities.size()
+    std::cout << std::fixed << std::setprecision(1) << "engine (" << backend << (with_dds ? " + DDS" : "") << "): " << sc.entities.size()
               << " entities, " << sc.sensors.size() << " radars, " << st.steps << " steps in " << st.wall_time_s
               << " s = " << (static_cast<double>(st.steps) / st.wall_time_s) << " steps/s (" << (st.sim_time_s / st.wall_time_s)
               << "x real time), " << st.messages << " messages, " << st.detections << " detections\n";
+#ifdef SIMBRIDGE_HAS_DDS
+    if (dds) {
+        const auto ds = dds->stats();
+        const double samples = static_cast<double>(ds.states_written + ds.detections_written);
+        std::cout << "  dds: " << static_cast<uint64_t>(samples) << " samples written = "
+                  << (samples / st.wall_time_s / 1e6) << " M samples/s, " << ds.write_errors << " errors\n";
+    }
+#endif
 }
 
 }  // namespace
@@ -83,6 +105,9 @@ int main(int argc, char** argv) {
         bench_bus();
         bench_engine(plugin_dir, "kinematic");
         bench_engine(plugin_dir, "legacy_blocks");
+#ifdef SIMBRIDGE_HAS_DDS
+        bench_engine(plugin_dir, "kinematic", true);
+#endif
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;

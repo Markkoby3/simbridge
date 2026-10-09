@@ -82,8 +82,10 @@ foreach(app simbridge_run simbridge_bench)
   add_dependencies(${app} waypoint_follower radar_sensor)
 endforeach()
 if(SIMBRIDGE_HAS_DDS)
-  target_link_libraries(simbridge_run PRIVATE simbridge_dds)
-  target_compile_definitions(simbridge_run PRIVATE SIMBRIDGE_HAS_DDS=1)
+  foreach(app simbridge_run simbridge_bench)
+    target_link_libraries(${app} PRIVATE simbridge_dds)
+    target_compile_definitions(${app} PRIVATE SIMBRIDGE_HAS_DDS=1)
+  endforeach()
 
   # Example autonomy process: shares only the IDL types and topic names with the simulation.
   add_executable(simbridge_autonomy apps/simbridge_autonomy.cpp)
