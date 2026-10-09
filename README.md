@@ -1,7 +1,8 @@
 # SimBridge
 
 A C++17 framework that connects simulation backends to autonomy software through
-runtime loaded plugins, backend adapters, and a typed publish/subscribe bus.
+runtime loaded plugins, backend adapters, a typed publish/subscribe bus, and a
+DDS transport (Eclipse Cyclone DDS) for autonomy running in other processes.
 
 The goal is the one a simulation framework team has: let autonomy and sensor
 developers write a model **once**, and run it against any simulator without
@@ -30,6 +31,7 @@ flowchart LR
         IFACE --> ADP[LegacyBlocksAdapter]
         ADP --> LEG[legacy::BlockSim<br/>feet, knots, compass deg, ms clock]
         BUS --> UDP[UdpBridge]
+        BUS <--> DDSB[DdsBridge<br/>Cyclone DDS]
     end
     subgraph Plugins .so
         WP[waypoint_follower]
@@ -40,6 +42,8 @@ flowchart LR
     RAD -- detection --> BUS
     BUS -- entity_state --> WP & RAD
     UDP -- binary packets --> PY[autonomy_listener.py<br/>separate process]
+    DDSB -- SimBridge_EntityState<br/>SimBridge_Detection --> AUT[simbridge_autonomy<br/>separate process]
+    AUT -- SimBridge_VehicleCommand --> DDSB
 ```
 
 Each frame at time *t*:
@@ -62,6 +66,41 @@ Each frame at time *t*:
 | Scenario loader | Line oriented scenario format with validation errors that report the line number. | `src/scenario.cpp` |
 | Wire format + `UdpBridge` | Versioned little endian binary encoding; streams bus traffic to another process over UDP. | `src/wire.cpp`, `src/udp_bridge.cpp` |
 | Python client | Decodes the same wire format in a separate process: a stand in autonomy consumer. | `tools/autonomy_listener.py` |
+| `DdsBridge` | Publishes entity state and detections on DDS topics and feeds DDS vehicle commands back onto the bus. Types defined in IDL, generated with `idlc`. | `src/dds_bridge.cpp`, `idl/simbridge_types.idl` |
+| `simbridge_autonomy` | Example autonomy process: reads state over DDS and flies an interceptor onto a target with lead pursuit. Links no simulation code. | `apps/simbridge_autonomy.cpp` |
+
+## DDS transport
+
+`--dds DOMAIN` connects a run to a DDS domain. Any DDS application that uses
+the same IDL types and topic names can watch the simulation or drive vehicles in it.
+
+| Topic | Direction | Type | QoS |
+| --- | --- | --- | --- |
+| `SimBridge_EntityState` | out | `simbridge_dds::EntityState`, keyed by `id` | RELIABLE, TRANSIENT_LOCAL, KEEP_LAST(1) per entity |
+| `SimBridge_Detection` | out | `simbridge_dds::Detection` | RELIABLE, VOLATILE |
+| `SimBridge_VehicleCommand` | in | `simbridge_dds::VehicleCommand`, keyed by `entity_id` | RELIABLE, VOLATILE, newest per entity |
+
+* **Late joiners see the whole world at once.** Entity state is keyed, so a
+  reader that starts mid run immediately receives the latest state of every
+  entity, not just the last sample written.
+* **Commands are applied on the simulation thread.** They wait inside DDS until
+  the loop calls `poll_commands()` once per frame, so no backend call ever
+  happens on a DDS thread.
+* **External vehicles.** An entity with `model = external` has no plugin and
+  only moves when commands arrive, which is how an outside autonomy stack takes
+  control of it.
+* **Optional.** CMake finds Cyclone DDS automatically (`SIMBRIDGE_WITH_DDS` =
+  `AUTO`, `ON` or `OFF`). Without it, everything else still builds and tests;
+  CI runs both configurations.
+
+Two process intercept demo:
+
+```bash
+./build/simbridge_run scenarios/dds_intercept.scn --dds 0 --realtime &
+./build/simbridge_autonomy --domain 0 --interceptor 10 --target 1
+# autonomy: tracking target at t=1.00 s, range 725 m
+# autonomy: CAPTURE at t=40.30 s, range 29.7 m, 795 commands sent
+```
 
 ## Migrating between backends safely
 
@@ -79,12 +118,16 @@ program cannot move from one to the other. Two tests enforce that:
 ## Build and test
 
 Requires CMake 3.16+ and a C++17 compiler (GCC 9+ or Clang 10+) on Linux.
-GoogleTest is fetched automatically.
+GoogleTest is fetched automatically. For the DDS transport, install Cyclone DDS:
+
+```bash
+sudo apt-get install cyclonedds-dev cyclonedds-tools   # Ubuntu 24.04
+```
 
 ```bash
 cmake -S . -B build
 cmake --build build -j
-ctest --test-dir build --output-on-failure      # 50 tests
+ctest --test-dir build --output-on-failure      # 58 tests (51 without DDS)
 
 # memory and undefined behavior checks
 cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DSIMBRIDGE_SANITIZE=ON
@@ -100,7 +143,8 @@ Test coverage:
 | `PluginRegistry` | directory loading, independent instances, missing files, **ABI mismatch rejection**, duplicate types |
 | `Backends` | straight line motion, turn rate and acceleration limits on both adapters, legacy unit conversion, millisecond remainder handling, open loop parity |
 | `Wire` | round trips, byte layout, truncated / wrong type / bad magic / bad version packets |
-| `Engine` | end to end scenario run, waypoint arrival, radar range and field of view, seeded reproducibility, closed loop parity, late joiner replay, unknown model types |
+| `Engine` | end to end scenario run, waypoint arrival, radar range and field of view, seeded reproducibility, closed loop parity, late joiner replay, external entities, unknown model types |
+| `DdsBridge` | all fields round trip over DDS, late joiner gets every entity's latest state, detections, commands held until polled, direction options, clean unsubscribe, **closed loop control of an external entity over DDS** |
 | `UdpBridge` | real packets over loopback decoded on the receiver, clean unsubscribe, bad addresses |
 
 ## Run it
@@ -134,6 +178,7 @@ Measured with `simbridge_bench` on a 2 core cloud VM, Release build:
 | Bus, 1 publisher, 4 subscribers | ~25 M publishes/s, ~99 M deliveries/s |
 | Engine, 200 entities + 20 radars, `kinematic` | ~9,200 steps/s (~460x real time at 20 Hz) |
 | Engine, same scenario, `legacy_blocks` | ~7,900 steps/s (~400x real time) |
+| Engine, same scenario, publishing everything over DDS | ~0.4 to 0.5 M DDS samples/s (~31x real time) |
 
 ## Writing a plugin
 
@@ -179,8 +224,8 @@ and reference `model = loiter` in a scenario. The plugin works on every backend.
 
 ## Roadmap
 
-* A DDS transport (Eclipse Cyclone DDS or Fast DDS) behind the same bus API
 * An image generator bridge for visual sensor plugins
+* DDS security and a configurable QoS profile file
 * Scenario import from a standard scenario interchange format
 
 ## License
